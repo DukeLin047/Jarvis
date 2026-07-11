@@ -31,4 +31,4 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service-account.json
         run: |
-          npx firebase-tools deploy --only functions,firestore:rules --project jarvis-d45fd --non-interactive
+          npx firebase-tools deploy --only functions,firestore:rules --project jarvis-d45fd --non-interactive --force
