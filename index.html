@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>家庭小管家</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  :root {
+    --navy: #1b2430;
+    --navy-deep: #131a24;
+    --parchment: #f5efe3;
+    --gold: #c9a96a;
+    --clay: #b5651d;
+    --sage: #6f8f5c;
+    --dusty-blue: #5f7a9e;
+    --ink: #2a2620;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--navy-deep);
+    font-family: "Noto Sans TC", sans-serif;
+    color: var(--parchment);
+    min-height: 100vh;
+  }
+  .app-container { max-width: 480px; margin: 0 auto; min-height: 100vh; background: var(--navy); }
+
+  /* Password gate */
+  .gate {
+    position: fixed; inset: 0; background: var(--navy-deep);
+    display: flex; align-items: center; justify-content: center; flex-direction: column;
+    z-index: 100; padding: 32px;
+  }
+  .gate-card {
+    background: var(--navy); border: 1px solid rgba(201,169,106,0.3);
+    border-radius: 4px; padding: 40px 28px; width: 100%; max-width: 340px;
+    text-align: center;
+  }
+  .gate-title {
+    font-family: "Noto Serif TC", serif; font-weight: 700; font-size: 24px;
+    color: var(--gold); margin-bottom: 8px; letter-spacing: 2px;
+  }
+  .gate-sub { font-size: 13px; color: rgba(245,239,227,0.55); margin-bottom: 28px; }
+  .gate input {
+    width: 100%; padding: 12px 14px; background: var(--navy-deep);
+    border: 1px solid rgba(201,169,106,0.4); border-radius: 3px;
+    color: var(--parchment); font-size: 16px; text-align: center;
+    letter-spacing: 4px;
+  }
+  .gate button {
+    margin-top: 16px; width: 100%; padding: 12px; background: var(--gold);
+    border: none; border-radius: 3px; color: var(--navy-deep); font-weight: 700;
+    font-size: 15px; cursor: pointer;
+  }
+  .gate-error { color: var(--clay); font-size: 13px; margin-top: 10px; height: 16px; }
+
+  /* Header */
+  .header {
+    padding: 28px 20px 20px; text-align: center;
+    border-bottom: 1px solid rgba(201,169,106,0.15);
+  }
+  .header-title {
+    font-family: "Noto Serif TC", serif; font-weight: 700; font-size: 22px;
+    color: var(--gold); letter-spacing: 3px;
+  }
+  .header-sub { font-size: 11px; color: rgba(245,239,227,0.4); margin-top: 4px; letter-spacing: 2px; }
+
+  /* Tabs */
+  .tabs { display: flex; padding: 16px 16px 0; gap: 8px; }
+  .tab {
+    flex: 1; padding: 10px 0; text-align: center; font-size: 14px; font-weight: 700;
+    border-radius: 3px 3px 0 0; cursor: pointer; opacity: 0.5; border-bottom: 3px solid transparent;
+  }
+  .tab.active { opacity: 1; }
+  .tab[data-k="expense"].active { border-color: var(--clay); color: var(--clay); }
+  .tab[data-k="todo"].active { border-color: var(--sage); color: var(--sage); }
+  .tab[data-k="note"].active { border-color: var(--dusty-blue); color: var(--dusty-blue); }
+
+  .content { padding: 20px 16px 60px; }
+
+  /* Summary card */
+  .summary-card {
+    background: rgba(201,169,106,0.06); border: 1px solid rgba(201,169,106,0.2);
+    border-radius: 4px; padding: 18px; margin-bottom: 20px;
+  }
+  .summary-title { font-size: 12px; color: rgba(245,239,227,0.5); letter-spacing: 1px; margin-bottom: 12px; }
+  .summary-total { font-family: "Noto Serif TC", serif; font-size: 28px; color: var(--clay); font-weight: 700; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
+  .bar-label { width: 62px; flex-shrink: 0; color: rgba(245,239,227,0.75); }
+  .bar-track { flex: 1; background: rgba(255,255,255,0.06); border-radius: 3px; height: 8px; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--clay); border-radius: 3px; }
+  .bar-amt { width: 64px; text-align: right; color: rgba(245,239,227,0.75); flex-shrink: 0; }
+
+  /* List items */
+  .item-card {
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 4px; padding: 14px 16px; margin-bottom: 10px;
+  }
+  .item-top { display: flex; justify-content: space-between; align-items: baseline; }
+  .item-name { font-size: 15px; font-weight: 500; }
+  .item-amt { font-size: 16px; font-weight: 700; color: var(--clay); }
+  .item-meta { font-size: 12px; color: rgba(245,239,227,0.45); margin-top: 6px; }
+  .cat-tag {
+    display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px;
+    background: rgba(181,101,29,0.18); color: #d99a5b; margin-right: 6px;
+  }
+  .todo-item { display: flex; align-items: center; gap: 10px; }
+  .todo-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--sage); flex-shrink: 0;
+  }
+  .todo-item.done .item-name { text-decoration: line-through; opacity: 0.4; }
+  .todo-item.done .todo-dot { background: rgba(245,239,227,0.2); }
+  .note-item { border-left: 3px solid var(--dusty-blue); }
+
+  .empty-state { text-align: center; padding: 60px 20px; color: rgba(245,239,227,0.35); font-size: 14px; }
+  .loading { text-align: center; padding: 60px 20px; color: rgba(245,239,227,0.35); font-size: 14px; }
+
+  .month-select {
+    background: var(--navy-deep); border: 1px solid rgba(201,169,106,0.3); color: var(--gold);
+    border-radius: 3px; padding: 6px 10px; font-size: 13px; float: right; margin-top: -2px;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+const firebaseConfig = {
+  apiKey: "PASTE_YOUR_FIREBASE_API_KEY",
+  authDomain: "jarvis-d45fd.firebaseapp.com",
+  projectId: "jarvis-d45fd",
+  storageBucket: "jarvis-d45fd.appspot.com",
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+const FAMILY_PASSWORD = "family1313"; // 可自行修改
+const CATEGORIES = ["餐飲", "交通", "生活用品", "醫療", "娛樂", "其他"];
+const CAT_COLORS = { "餐飲": "#b5651d", "交通": "#a67c3d", "生活用品": "#c9a96a", "醫療": "#8a6d3b", "娛樂": "#d99a5b", "其他": "#7d6a4f" };
+
+function PasswordGate({ onUnlock }) {
+  const [val, setVal] = useState("");
+  const [err, setErr] = useState(false);
+
+  const submit = () => {
+    if (val === FAMILY_PASSWORD) {
+      localStorage.setItem("jarvis_unlocked", "1");
+      onUnlock();
+    } else {
+      setErr(true);
+    }
+  };
+
+  return (
+    <div className="gate">
+      <div className="gate-card">
+        <div className="gate-title">家庭小管家</div>
+        <div className="gate-sub">請輸入家庭通關密語</div>
+        <input
+          type="password"
+          value={val}
+          onChange={(e) => { setVal(e.target.value); setErr(false); }}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+          placeholder="••••••"
+        />
+        <div className="gate-error">{err ? "密語不對喔，再試一次" : ""}</div>
+        <button onClick={submit}>進入</button>
+      </div>
+    </div>
+  );
+}
+
+function useCollection(name) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    db.collection(name).onSnapshot((snap) => {
+      const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      docs.sort((a, b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0));
+      setData(docs);
+    });
+  }, [name]);
+  return data;
+}
+
+function ExpenseTab() {
+  const expenses = useCollection("expenses");
+  const months = useMemo(() => {
+    if (!expenses) return [];
+    return [...new Set(expenses.map((e) => e.yearMonth))].sort().reverse();
+  }, [expenses]);
+  const [month, setMonth] = useState(null);
+  useEffect(() => { if (!month && months.length) setMonth(months[0]); }, [months]);
+
+  if (!expenses) return <div className="loading">載入中...</div>;
+  if (expenses.length === 0) return <div className="empty-state">還沒有任何記帳紀錄<br/>在 LINE 群組輸入「記帳 餐飲 午餐 150」試試看</div>;
+
+  const filtered = expenses.filter((e) => e.yearMonth === month);
+  const byCategory = {};
+  let total = 0;
+  filtered.forEach((e) => { byCategory[e.category] = (byCategory[e.category] || 0) + e.amount; total += e.amount; });
+  const maxAmt = Math.max(1, ...Object.values(byCategory));
+
+  return (
+    <div>
+      <div className="summary-card">
+        <div className="summary-title">
+          {month} 支出統計
+          <select className="month-select" value={month || ""} onChange={(e) => setMonth(e.target.value)}>
+            {months.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+        <div className="summary-total">${total.toLocaleString()}</div>
+        {Object.entries(byCategory).sort((a,b) => b[1]-a[1]).map(([cat, amt]) => (
+          <div className="bar-row" key={cat}>
+            <div className="bar-label">{cat}</div>
+            <div className="bar-track"><div className="bar-fill" style={{width: `${(amt/maxAmt)*100}%`, background: CAT_COLORS[cat]}}></div></div>
+            <div className="bar-amt">${amt.toLocaleString()}</div>
+          </div>
+        ))}
+      </div>
+      {filtered.map((e) => (
+        <div className="item-card" key={e.id}>
+          <div className="item-top">
+            <div className="item-name">{e.item}</div>
+            <div className="item-amt">${e.amount.toLocaleString()}</div>
+          </div>
+          <div className="item-meta"><span className="cat-tag">{e.category}</span>{e.sender}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TodoTab() {
+  const todos = useCollection("todos");
+  if (!todos) return <div className="loading">載入中...</div>;
+  if (todos.length === 0) return <div className="empty-state">還沒有待辦事項<br/>在 LINE 群組輸入「待辦 買尿布」試試看</div>;
+
+  const undone = todos.filter((t) => !t.done);
+  const done = todos.filter((t) => t.done);
+
+  return (
+    <div>
+      {undone.map((t) => (
+        <div className="item-card todo-item" key={t.id}>
+          <div className="todo-dot"></div>
+          <div style={{flex:1}}>
+            <div className="item-name">{t.content}</div>
+            <div className="item-meta">{t.sender}</div>
+          </div>
+        </div>
+      ))}
+      {done.length > 0 && <div className="summary-title" style={{margin:"20px 0 10px"}}>已完成</div>}
+      {done.map((t) => (
+        <div className="item-card todo-item done" key={t.id}>
+          <div className="todo-dot"></div>
+          <div style={{flex:1}}>
+            <div className="item-name">{t.content}</div>
+            <div className="item-meta">{t.sender} → {t.doneBy || ""} 完成</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function NoteTab() {
+  const notes = useCollection("notes");
+  if (!notes) return <div className="loading">載入中...</div>;
+  if (notes.length === 0) return <div className="empty-state">還沒有備忘紀錄<br/>在 LINE 群組輸入「備忘 週日阿嬤生日」試試看</div>;
+
+  return (
+    <div>
+      {notes.map((n) => (
+        <div className="item-card note-item" key={n.id}>
+          <div className="item-name">{n.content}</div>
+          <div className="item-meta">{n.sender}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function App() {
+  const [unlocked, setUnlocked] = useState(localStorage.getItem("jarvis_unlocked") === "1");
+  const [tab, setTab] = useState("expense");
+
+  if (!unlocked) return <PasswordGate onUnlock={() => setUnlocked(true)} />;
+
+  return (
+    <div className="app-container">
+      <div className="header">
+        <div className="header-title">家庭小管家</div>
+        <div className="header-sub">JARVIS · HOUSEHOLD LEDGER</div>
+      </div>
+      <div className="tabs">
+        <div className={`tab ${tab==="expense"?"active":""}`} data-k="expense" onClick={() => setTab("expense")}>記帳</div>
+        <div className={`tab ${tab==="todo"?"active":""}`} data-k="todo" onClick={() => setTab("todo")}>待辦</div>
+        <div className={`tab ${tab==="note"?"active":""}`} data-k="note" onClick={() => setTab("note")}>備忘</div>
+      </div>
+      <div className="content">
+        {tab === "expense" && <ExpenseTab />}
+        {tab === "todo" && <TodoTab />}
+        {tab === "note" && <NoteTab />}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
