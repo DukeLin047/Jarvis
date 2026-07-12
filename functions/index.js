@@ -84,6 +84,66 @@ function parseExpense(text) {
   return { category, item, amount };
 }
 
+async function handleDeleteExpense(keyword, groupId, replyToken) {
+  if (!keyword) {
+    await replyMessage(replyToken, "格式: 刪除記帳 關鍵字\n例如: 刪除記帳 午餐");
+    return;
+  }
+  const snap = await db.collection("expenses").where("groupId", "==", groupId).get();
+  const docs = snap.docs
+    .filter((d) => d.data().item.includes(keyword))
+    .sort((a, b) => (b.data().timestamp?.toMillis?.() || 0) - (a.data().timestamp?.toMillis?.() || 0));
+
+  if (docs.length === 0) {
+    await replyMessage(replyToken, `找不到符合「${keyword}」的記帳紀錄`);
+    return;
+  }
+  const target = docs[0];
+  const data = target.data();
+  await target.ref.delete();
+  await replyMessage(replyToken, `已刪除 🗑️\n${data.category} - ${data.item} $${data.amount}`);
+}
+
+async function handleEditExpense(text, groupId, senderName, replyToken) {
+  const tokens = text.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length < 3) {
+    await replyMessage(
+      replyToken,
+      "格式: 改記帳 舊關鍵字 類別 項目 金額\n例如: 改記帳 午餐 餐飲 排骨飯 120\n(類別可省略)"
+    );
+    return;
+  }
+  const keyword = tokens[0];
+  const parsed = parseExpense(tokens.slice(1).join(" "));
+  if (!parsed) {
+    await replyMessage(replyToken, "新內容格式不對喔～請用: 改記帳 舊關鍵字 類別 項目 金額");
+    return;
+  }
+
+  const snap = await db.collection("expenses").where("groupId", "==", groupId).get();
+  const docs = snap.docs
+    .filter((d) => d.data().item.includes(keyword))
+    .sort((a, b) => (b.data().timestamp?.toMillis?.() || 0) - (a.data().timestamp?.toMillis?.() || 0));
+
+  if (docs.length === 0) {
+    await replyMessage(replyToken, `找不到符合「${keyword}」的記帳紀錄`);
+    return;
+  }
+  const target = docs[0];
+  const old = target.data();
+  await target.ref.update({
+    category: parsed.category,
+    item: parsed.item,
+    amount: parsed.amount,
+    editedBy: senderName,
+    editedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await replyMessage(
+    replyToken,
+    `已修改 ✏️\n${old.category} - ${old.item} $${old.amount}\n→ ${parsed.category} - ${parsed.item} $${parsed.amount}\n修改人: ${senderName}`
+  );
+}
+
 async function handleAddExpense(text, groupId, senderName, replyToken) {
   const parsed = parseExpense(text);
   if (!parsed) {
@@ -159,6 +219,54 @@ async function handleQueryExpense(text, groupId, replyToken) {
 
 // ---------- 待辦 ----------
 
+async function handleDeleteTodo(keyword, groupId, replyToken) {
+  if (!keyword) {
+    await replyMessage(replyToken, "格式: 刪除待辦 關鍵字\n例如: 刪除待辦 買尿布");
+    return;
+  }
+  const snap = await db.collection("todos").where("groupId", "==", groupId).get();
+  const docs = snap.docs
+    .filter((d) => d.data().content.includes(keyword))
+    .sort((a, b) => (b.data().timestamp?.toMillis?.() || 0) - (a.data().timestamp?.toMillis?.() || 0));
+
+  if (docs.length === 0) {
+    await replyMessage(replyToken, `找不到符合「${keyword}」的待辦事項`);
+    return;
+  }
+  const target = docs[0];
+  const content = target.data().content;
+  await target.ref.delete();
+  await replyMessage(replyToken, `已刪除待辦 🗑️\n「${content}」`);
+}
+
+async function handleEditTodo(text, groupId, senderName, replyToken) {
+  const tokens = text.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length < 2) {
+    await replyMessage(replyToken, "格式: 改待辦 舊關鍵字 新內容\n例如: 改待辦 尿布 買濕紙巾");
+    return;
+  }
+  const keyword = tokens[0];
+  const newContent = tokens.slice(1).join(" ");
+
+  const snap = await db.collection("todos").where("groupId", "==", groupId).get();
+  const docs = snap.docs
+    .filter((d) => d.data().content.includes(keyword))
+    .sort((a, b) => (b.data().timestamp?.toMillis?.() || 0) - (a.data().timestamp?.toMillis?.() || 0));
+
+  if (docs.length === 0) {
+    await replyMessage(replyToken, `找不到符合「${keyword}」的待辦事項`);
+    return;
+  }
+  const target = docs[0];
+  const old = target.data().content;
+  await target.ref.update({
+    content: newContent,
+    editedBy: senderName,
+    editedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await replyMessage(replyToken, `已修改待辦 ✏️\n「${old}」→「${newContent}」\n修改人: ${senderName}`);
+}
+
 async function handleAddTodo(content, groupId, senderName, replyToken) {
   if (!content) {
     await replyMessage(replyToken, "格式: 待辦 內容\n例如: 待辦 買尿布");
@@ -211,6 +319,54 @@ async function handleCompleteTodo(keyword, groupId, senderName, replyToken) {
 
 // ---------- 備忘 ----------
 
+async function handleDeleteNote(keyword, groupId, replyToken) {
+  if (!keyword) {
+    await replyMessage(replyToken, "格式: 刪除備忘 關鍵字\n例如: 刪除備忘 聚餐");
+    return;
+  }
+  const snap = await db.collection("notes").where("groupId", "==", groupId).get();
+  const docs = snap.docs
+    .filter((d) => d.data().content.includes(keyword))
+    .sort((a, b) => (b.data().timestamp?.toMillis?.() || 0) - (a.data().timestamp?.toMillis?.() || 0));
+
+  if (docs.length === 0) {
+    await replyMessage(replyToken, `找不到符合「${keyword}」的備忘紀錄`);
+    return;
+  }
+  const target = docs[0];
+  const content = target.data().content;
+  await target.ref.delete();
+  await replyMessage(replyToken, `已刪除備忘 🗑️\n「${content}」`);
+}
+
+async function handleEditNote(text, groupId, senderName, replyToken) {
+  const tokens = text.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length < 2) {
+    await replyMessage(replyToken, "格式: 改備忘 舊關鍵字 新內容\n例如: 改備忘 聚餐 改成週六聚餐");
+    return;
+  }
+  const keyword = tokens[0];
+  const newContent = tokens.slice(1).join(" ");
+
+  const snap = await db.collection("notes").where("groupId", "==", groupId).get();
+  const docs = snap.docs
+    .filter((d) => d.data().content.includes(keyword))
+    .sort((a, b) => (b.data().timestamp?.toMillis?.() || 0) - (a.data().timestamp?.toMillis?.() || 0));
+
+  if (docs.length === 0) {
+    await replyMessage(replyToken, `找不到符合「${keyword}」的備忘紀錄`);
+    return;
+  }
+  const target = docs[0];
+  const old = target.data().content;
+  await target.ref.update({
+    content: newContent,
+    editedBy: senderName,
+    editedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await replyMessage(replyToken, `已修改備忘 ✏️\n「${old}」→「${newContent}」\n修改人: ${senderName}`);
+}
+
 async function handleAddNote(content, groupId, senderName, replyToken) {
   if (!content) {
     await replyMessage(replyToken, "格式: 備忘 內容\n例如: 備忘 週日阿嬤生日");
@@ -247,15 +403,21 @@ const HELP_TEXT = `🏠 家庭小管家 使用說明
 【記帳】
 記帳 類別 項目 金額 (類別可省略)
 查帳 / 查帳 類別
+改記帳 舊關鍵字 類別 項目 金額
+刪除記帳 關鍵字
 
 【待辦】
 待辦 內容
 查待辦
 完成 關鍵字
+改待辦 舊關鍵字 新內容
+刪除待辦 關鍵字
 
 【備忘】
 備忘 內容
 查備忘
+改備忘 舊關鍵字 新內容
+刪除備忘 關鍵字
 
 可用類別: ${CATEGORIES.join("/")}`;
 
@@ -354,11 +516,21 @@ exports.lineWebhook = onRequest(async (req, res) => {
       const replyToken = event.replyToken;
 
       try {
-        if (text.startsWith("記帳")) {
+        if (text.startsWith("刪除記帳")) {
+          await handleDeleteExpense(text.slice(4).trim(), groupId, replyToken);
+        } else if (text.startsWith("改記帳")) {
+          const senderName = await getDisplayName(event.source);
+          await handleEditExpense(text.slice(3).trim(), groupId, senderName, replyToken);
+        } else if (text.startsWith("記帳")) {
           const senderName = await getDisplayName(event.source);
           await handleAddExpense(text.slice(2).trim(), groupId, senderName, replyToken);
         } else if (text.startsWith("查帳")) {
           await handleQueryExpense(text.slice(2).trim(), groupId, replyToken);
+        } else if (text.startsWith("刪除待辦")) {
+          await handleDeleteTodo(text.slice(4).trim(), groupId, replyToken);
+        } else if (text.startsWith("改待辦")) {
+          const senderName = await getDisplayName(event.source);
+          await handleEditTodo(text.slice(3).trim(), groupId, senderName, replyToken);
         } else if (text.startsWith("待辦")) {
           const senderName = await getDisplayName(event.source);
           await handleAddTodo(text.slice(2).trim(), groupId, senderName, replyToken);
@@ -367,6 +539,11 @@ exports.lineWebhook = onRequest(async (req, res) => {
         } else if (text.startsWith("完成")) {
           const senderName = await getDisplayName(event.source);
           await handleCompleteTodo(text.slice(2).trim(), groupId, senderName, replyToken);
+        } else if (text.startsWith("刪除備忘")) {
+          await handleDeleteNote(text.slice(4).trim(), groupId, replyToken);
+        } else if (text.startsWith("改備忘")) {
+          const senderName = await getDisplayName(event.source);
+          await handleEditNote(text.slice(3).trim(), groupId, senderName, replyToken);
         } else if (text.startsWith("備忘")) {
           const senderName = await getDisplayName(event.source);
           await handleAddNote(text.slice(2).trim(), groupId, senderName, replyToken);
