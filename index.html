@@ -126,6 +126,36 @@
     background: var(--navy-deep); border: 1px solid rgba(201,169,106,0.3); color: var(--gold);
     border-radius: 3px; padding: 6px 10px; font-size: 13px; float: right; margin-top: -2px;
   }
+
+  /* Edit / delete actions */
+  .action-row { display: flex; gap: 6px; flex-shrink: 0; }
+  .icon-btn {
+    background: none; border: none; padding: 4px 6px; font-size: 15px; opacity: 0.5;
+    cursor: pointer; line-height: 1;
+  }
+  .icon-btn:active { opacity: 1; }
+  .todo-check {
+    width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--sage);
+    flex-shrink: 0; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    background: none; padding: 0;
+  }
+  .todo-check.checked { background: var(--sage); }
+  .todo-check.checked::after { content: "✓"; color: var(--navy-deep); font-size: 13px; font-weight: 700; }
+
+  .edit-form { display: flex; flex-direction: column; gap: 8px; }
+  .edit-form input, .edit-form select {
+    background: var(--navy-deep); border: 1px solid rgba(201,169,106,0.35); border-radius: 3px;
+    color: var(--parchment); font-size: 14px; padding: 8px 10px; font-family: inherit;
+  }
+  .edit-form-row { display: flex; gap: 8px; }
+  .edit-form-row > * { flex: 1; }
+  .edit-btns { display: flex; gap: 8px; margin-top: 2px; }
+  .edit-btns button {
+    flex: 1; padding: 8px; border: none; border-radius: 3px; font-size: 13px; font-weight: 700;
+    cursor: pointer; font-family: inherit;
+  }
+  .btn-save { background: var(--gold); color: var(--navy-deep); }
+  .btn-cancel { background: rgba(255,255,255,0.08); color: var(--parchment); }
 </style>
 </head>
 <body>
@@ -135,10 +165,12 @@
 const { useState, useEffect, useMemo } = React;
 
 const firebaseConfig = {
-  apiKey: "PASTE_YOUR_FIREBASE_API_KEY",
+  apiKey: "AIzaSyB4n9hV4fTMI_qdJn8NxDgsZ_Uqa6cu3cs",
   authDomain: "jarvis-d45fd.firebaseapp.com",
   projectId: "jarvis-d45fd",
-  storageBucket: "jarvis-d45fd.appspot.com",
+  storageBucket: "jarvis-d45fd.firebasestorage.app",
+  messagingSenderId: "362035384532",
+  appId: "1:362035384532:web:06ac499f403e86a68beb41"
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
@@ -206,6 +238,8 @@ function ExpenseTab() {
   }, [expenses]);
   const [month, setMonth] = useState(null);
   useEffect(() => { if (!month && months.length) setMonth(months[0]); }, [months]);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState({ category: "", item: "", amount: "" });
 
   if (!expenses) return <div className="loading">載入中...</div>;
   if (expenses.length === 0) return <div className="empty-state">還沒有任何記帳紀錄<br/>在 LINE 群組輸入「記帳 餐飲 午餐 150」試試看</div>;
@@ -215,6 +249,29 @@ function ExpenseTab() {
   let total = 0;
   filtered.forEach((e) => { byCategory[e.category] = (byCategory[e.category] || 0) + e.amount; total += e.amount; });
   const maxAmt = Math.max(1, ...Object.values(byCategory));
+
+  const startEdit = (e) => {
+    setEditingId(e.id);
+    setForm({ category: e.category, item: e.item, amount: e.amount });
+  };
+
+  const saveEdit = async (id) => {
+    const amount = parseFloat(form.amount);
+    if (!form.item.trim() || isNaN(amount)) return;
+    await db.collection("expenses").doc(id).update({
+      category: form.category,
+      item: form.item.trim(),
+      amount,
+      editedBy: "網頁",
+      editedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    setEditingId(null);
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm("確定要刪除這筆記帳嗎？")) return;
+    await db.collection("expenses").doc(id).delete();
+  };
 
   return (
     <div>
@@ -236,11 +293,35 @@ function ExpenseTab() {
       </div>
       {filtered.map((e) => (
         <div className="item-card" key={e.id}>
-          <div className="item-top">
-            <div className="item-name">{e.item}</div>
-            <div className="item-amt">${e.amount.toLocaleString()}</div>
-          </div>
-          <div className="item-meta"><span className="cat-tag">{e.category}</span>{e.sender} · {formatDate(e.timestamp)}</div>
+          {editingId === e.id ? (
+            <div className="edit-form">
+              <div className="edit-form-row">
+                <select value={form.category} onChange={(ev) => setForm({...form, category: ev.target.value})}>
+                  {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <input type="number" value={form.amount} onChange={(ev) => setForm({...form, amount: ev.target.value})} placeholder="金額" />
+              </div>
+              <input value={form.item} onChange={(ev) => setForm({...form, item: ev.target.value})} placeholder="項目" />
+              <div className="edit-btns">
+                <button className="btn-save" onClick={() => saveEdit(e.id)}>儲存</button>
+                <button className="btn-cancel" onClick={() => setEditingId(null)}>取消</button>
+              </div>
+            </div>
+          ) : (
+            <React.Fragment>
+              <div className="item-top">
+                <div className="item-name">{e.item}</div>
+                <div style={{display:"flex", alignItems:"center", gap:8}}>
+                  <div className="item-amt">${e.amount.toLocaleString()}</div>
+                  <div className="action-row">
+                    <button className="icon-btn" onClick={() => startEdit(e)}>✏️</button>
+                    <button className="icon-btn" onClick={() => remove(e.id)}>🗑️</button>
+                  </div>
+                </div>
+              </div>
+              <div className="item-meta"><span className="cat-tag">{e.category}</span>{e.sender} · {formatDate(e.timestamp)}</div>
+            </React.Fragment>
+          )}
         </div>
       ))}
     </div>
@@ -249,48 +330,124 @@ function ExpenseTab() {
 
 function TodoTab() {
   const todos = useCollection("todos");
+  const [editingId, setEditingId] = useState(null);
+  const [content, setContent] = useState("");
+
   if (!todos) return <div className="loading">載入中...</div>;
   if (todos.length === 0) return <div className="empty-state">還沒有待辦事項<br/>在 LINE 群組輸入「待辦 買尿布」試試看</div>;
 
   const undone = todos.filter((t) => !t.done);
   const done = todos.filter((t) => t.done);
 
+  const toggle = async (t) => {
+    await db.collection("todos").doc(t.id).update({
+      done: !t.done,
+      doneBy: !t.done ? "網頁" : null,
+      doneAt: !t.done ? firebase.firestore.FieldValue.serverTimestamp() : null,
+    });
+  };
+
+  const startEdit = (t) => { setEditingId(t.id); setContent(t.content); };
+
+  const saveEdit = async (id) => {
+    if (!content.trim()) return;
+    await db.collection("todos").doc(id).update({
+      content: content.trim(),
+      editedBy: "網頁",
+      editedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    setEditingId(null);
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm("確定要刪除這筆待辦嗎？")) return;
+    await db.collection("todos").doc(id).delete();
+  };
+
+  const renderItem = (t) => (
+    <div className={`item-card todo-item ${t.done ? "done" : ""}`} key={t.id}>
+      {editingId === t.id ? (
+        <div className="edit-form" style={{flex:1}}>
+          <input value={content} onChange={(e) => setContent(e.target.value)} placeholder="待辦內容" />
+          <div className="edit-btns">
+            <button className="btn-save" onClick={() => saveEdit(t.id)}>儲存</button>
+            <button className="btn-cancel" onClick={() => setEditingId(null)}>取消</button>
+          </div>
+        </div>
+      ) : (
+        <React.Fragment>
+          <button className={`todo-check ${t.done ? "checked" : ""}`} onClick={() => toggle(t)}></button>
+          <div style={{flex:1}}>
+            <div className="item-name">{t.content}</div>
+            <div className="item-meta">{t.done ? `${t.sender} → ${t.doneBy || ""} 完成` : t.sender}</div>
+          </div>
+          <div className="action-row">
+            <button className="icon-btn" onClick={() => startEdit(t)}>✏️</button>
+            <button className="icon-btn" onClick={() => remove(t.id)}>🗑️</button>
+          </div>
+        </React.Fragment>
+      )}
+    </div>
+  );
+
   return (
     <div>
-      {undone.map((t) => (
-        <div className="item-card todo-item" key={t.id}>
-          <div className="todo-dot"></div>
-          <div style={{flex:1}}>
-            <div className="item-name">{t.content}</div>
-            <div className="item-meta">{t.sender}</div>
-          </div>
-        </div>
-      ))}
+      {undone.map(renderItem)}
       {done.length > 0 && <div className="summary-title" style={{margin:"20px 0 10px"}}>已完成</div>}
-      {done.map((t) => (
-        <div className="item-card todo-item done" key={t.id}>
-          <div className="todo-dot"></div>
-          <div style={{flex:1}}>
-            <div className="item-name">{t.content}</div>
-            <div className="item-meta">{t.sender} → {t.doneBy || ""} 完成</div>
-          </div>
-        </div>
-      ))}
+      {done.map(renderItem)}
     </div>
   );
 }
 
 function NoteTab() {
   const notes = useCollection("notes");
+  const [editingId, setEditingId] = useState(null);
+  const [content, setContent] = useState("");
+
   if (!notes) return <div className="loading">載入中...</div>;
   if (notes.length === 0) return <div className="empty-state">還沒有備忘紀錄<br/>在 LINE 群組輸入「備忘 週日阿嬤生日」試試看</div>;
+
+  const startEdit = (n) => { setEditingId(n.id); setContent(n.content); };
+
+  const saveEdit = async (id) => {
+    if (!content.trim()) return;
+    await db.collection("notes").doc(id).update({
+      content: content.trim(),
+      editedBy: "網頁",
+      editedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    setEditingId(null);
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm("確定要刪除這筆備忘嗎？")) return;
+    await db.collection("notes").doc(id).delete();
+  };
 
   return (
     <div>
       {notes.map((n) => (
         <div className="item-card note-item" key={n.id}>
-          <div className="item-name">{n.content}</div>
-          <div className="item-meta">{n.sender} · {formatDate(n.timestamp)}</div>
+          {editingId === n.id ? (
+            <div className="edit-form">
+              <input value={content} onChange={(e) => setContent(e.target.value)} placeholder="備忘內容" />
+              <div className="edit-btns">
+                <button className="btn-save" onClick={() => saveEdit(n.id)}>儲存</button>
+                <button className="btn-cancel" onClick={() => setEditingId(null)}>取消</button>
+              </div>
+            </div>
+          ) : (
+            <div className="item-top">
+              <div style={{flex:1}}>
+                <div className="item-name">{n.content}</div>
+                <div className="item-meta">{n.sender} · {formatDate(n.timestamp)}</div>
+              </div>
+              <div className="action-row">
+                <button className="icon-btn" onClick={() => startEdit(n)}>✏️</button>
+                <button className="icon-btn" onClick={() => remove(n.id)}>🗑️</button>
+              </div>
+            </div>
+          )}
         </div>
       ))}
     </div>
