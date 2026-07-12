@@ -396,6 +396,50 @@ async function handleQueryNote(groupId, replyToken) {
   await replyMessage(replyToken, `📌 最近備忘\n${lines.join("\n")}`);
 }
 
+// ---------- 依日期查詢 ----------
+
+async function handleQueryByDate(month, day, groupId, replyToken) {
+  const expSnap = await db.collection("expenses").where("groupId", "==", groupId).get();
+  const noteSnap = await db.collection("notes").where("groupId", "==", groupId).get();
+
+  const matchDate = (timestamp) => {
+    if (!timestamp?.toDate) return false;
+    const d = new Date(timestamp.toDate().toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+    return d.getMonth() + 1 === month && d.getDate() === day;
+  };
+
+  const expenses = expSnap.docs
+    .map((d) => d.data())
+    .filter((d) => matchDate(d.timestamp))
+    .sort((a, b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0));
+
+  const notes = noteSnap.docs
+    .map((d) => d.data())
+    .filter((d) => matchDate(d.timestamp))
+    .sort((a, b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0));
+
+  if (expenses.length === 0 && notes.length === 0) {
+    await replyMessage(replyToken, `找不到 ${month}/${day} 的任何記帳或備忘紀錄`);
+    return;
+  }
+
+  let text = `📅 ${month}/${day} 紀錄\n`;
+
+  if (expenses.length > 0) {
+    const total = expenses.reduce((s, d) => s + d.amount, 0);
+    text += `\n【記帳】\n`;
+    text += expenses.map((d) => `・${d.category} ${d.item} $${d.amount} (${d.sender})`).join("\n");
+    text += `\n小計: $${total}`;
+  }
+
+  if (notes.length > 0) {
+    text += `\n\n【備忘】\n`;
+    text += notes.map((d) => `・${d.content} (${d.sender})`).join("\n");
+  }
+
+  await replyMessage(replyToken, text);
+}
+
 // ---------- 說明 ----------
 
 const HELP_TEXT = `🏠 家庭小管家 使用說明
@@ -418,6 +462,9 @@ const HELP_TEXT = `🏠 家庭小管家 使用說明
 查備忘
 改備忘 舊關鍵字 新內容
 刪除備忘 關鍵字
+
+【依日期查詢】
+查7/12 → 叫出當天的記帳+備忘
 
 可用類別: ${CATEGORIES.join("/")}`;
 
@@ -516,7 +563,12 @@ exports.lineWebhook = onRequest(async (req, res) => {
       const replyToken = event.replyToken;
 
       try {
-        if (text.startsWith("刪除記帳")) {
+        const dateMatch = text.match(/^查\s*(\d{1,2})\/(\d{1,2})$/);
+        if (dateMatch) {
+          const month = parseInt(dateMatch[1], 10);
+          const day = parseInt(dateMatch[2], 10);
+          await handleQueryByDate(month, day, groupId, replyToken);
+        } else if (text.startsWith("刪除記帳")) {
           await handleDeleteExpense(text.slice(4).trim(), groupId, replyToken);
         } else if (text.startsWith("改記帳")) {
           const senderName = await getDisplayName(event.source);
