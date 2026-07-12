@@ -10,6 +10,14 @@ const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
 const CATEGORIES = ["餐飲", "交通", "生活用品", "醫療", "娛樂", "其他"];
 
+function formatDate(date) {
+  const taipei = new Date(date.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+  const m = taipei.getMonth() + 1;
+  const d = taipei.getDate();
+  const wd = ["日", "一", "二", "三", "四", "五", "六"][taipei.getDay()];
+  return `${m}/${d}(${wd})`;
+}
+
 // ---------- LINE API helpers ----------
 
 async function replyMessage(replyToken, text) {
@@ -101,7 +109,7 @@ async function handleAddExpense(text, groupId, senderName, replyToken) {
 
   await replyMessage(
     replyToken,
-    `已記帳 ✅\n${parsed.category} - ${parsed.item}\n金額: $${parsed.amount}\n記錄人: ${senderName}`
+    `已記帳 ✅\n${parsed.category} - ${parsed.item}\n金額: $${parsed.amount}\n日期: ${formatDate(now)}\n記錄人: ${senderName}`
   );
 }
 
@@ -129,7 +137,7 @@ async function handleQueryExpense(text, groupId, replyToken) {
   if (arg && CATEGORIES.includes(arg)) {
     const lines = docs
       .slice(0, 15)
-      .map((d) => `・${d.item} $${d.amount} (${d.sender})`);
+      .map((d) => `・${formatDate(d.timestamp?.toDate?.() || new Date())} ${d.item} $${d.amount} (${d.sender})`);
     const total = docs.reduce((s, d) => s + d.amount, 0);
     await replyMessage(replyToken, `${title}\n${lines.join("\n")}\n\n小計: $${total}`);
   } else {
@@ -214,7 +222,7 @@ async function handleAddNote(content, groupId, senderName, replyToken) {
     sender: senderName,
     timestamp: admin.firestore.FieldValue.serverTimestamp(),
   });
-  await replyMessage(replyToken, `已記錄備忘 ✅\n「${content}」\n記錄人: ${senderName}`);
+  await replyMessage(replyToken, `已記錄備忘 ✅\n「${content}」\n日期: ${formatDate(new Date())}\n記錄人: ${senderName}`);
 }
 
 async function handleQueryNote(groupId, replyToken) {
@@ -228,7 +236,7 @@ async function handleQueryNote(groupId, replyToken) {
     await replyMessage(replyToken, "目前沒有備忘紀錄");
     return;
   }
-  const lines = docs.map((d) => `・${d.content} (${d.sender})`);
+  const lines = docs.map((d) => `・${formatDate(d.timestamp?.toDate?.() || new Date())} ${d.content} (${d.sender})`);
   await replyMessage(replyToken, `📌 最近備忘\n${lines.join("\n")}`);
 }
 
