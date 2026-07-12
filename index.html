@@ -156,6 +156,31 @@
   }
   .btn-save { background: var(--gold); color: var(--navy-deep); }
   .btn-cancel { background: rgba(255,255,255,0.08); color: var(--parchment); }
+
+  /* Calendar */
+  .calendar-card {
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 4px; padding: 16px; margin-bottom: 20px;
+  }
+  .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+  .calendar-weekday {
+    text-align: center; font-size: 11px; color: rgba(245,239,227,0.4); padding-bottom: 4px;
+  }
+  .calendar-day {
+    aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border-radius: 6px; font-size: 13px; color: rgba(245,239,227,0.8);
+    background: rgba(255,255,255,0.025); cursor: pointer; position: relative;
+  }
+  .calendar-day.empty { visibility: hidden; cursor: default; }
+  .calendar-day.has-data { color: var(--clay); font-weight: 700; background: rgba(181,101,29,0.14); }
+  .calendar-day.selected { background: var(--clay); color: var(--navy-deep); }
+  .calendar-dot {
+    width: 4px; height: 4px; border-radius: 50%; background: var(--clay); margin-top: 3px;
+  }
+  .calendar-day.selected .calendar-dot { background: var(--navy-deep); }
+  .calendar-clear {
+    text-align: center; font-size: 12px; color: var(--gold); margin-top: 10px; cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -184,6 +209,12 @@ function formatDate(timestamp) {
   const date = timestamp.toDate();
   const wd = ["日", "一", "二", "三", "四", "五", "六"][date.getDay()];
   return `${date.getMonth() + 1}/${date.getDate()}(${wd})`;
+}
+
+function getTaipeiDay(timestamp) {
+  if (!timestamp || !timestamp.toDate) return null;
+  const d = new Date(timestamp.toDate().toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+  return d.getDate();
 }
 
 function PasswordGate({ onUnlock }) {
@@ -240,6 +271,8 @@ function ExpenseTab() {
   useEffect(() => { if (!month && months.length) setMonth(months[0]); }, [months]);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ category: "", item: "", amount: "" });
+  const [selectedDay, setSelectedDay] = useState(null);
+  useEffect(() => { setSelectedDay(null); }, [month]);
 
   if (!expenses) return <div className="loading">載入中...</div>;
   if (expenses.length === 0) return <div className="empty-state">還沒有任何記帳紀錄<br/>在 LINE 群組輸入「記帳 餐飲 午餐 150」試試看</div>;
@@ -249,6 +282,23 @@ function ExpenseTab() {
   let total = 0;
   filtered.forEach((e) => { byCategory[e.category] = (byCategory[e.category] || 0) + e.amount; total += e.amount; });
   const maxAmt = Math.max(1, ...Object.values(byCategory));
+
+  // 萬年曆：計算本月天數與每天是否有記帳
+  const [yStr, mStr] = (month || "2026-01").split("-");
+  const y = parseInt(yStr, 10), m = parseInt(mStr, 10);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const firstWeekday = new Date(y, m - 1, 1).getDay();
+  const dayHasData = {};
+  filtered.forEach((e) => {
+    const d = getTaipeiDay(e.timestamp);
+    if (d) dayHasData[d] = true;
+  });
+  const calendarCells = [
+    ...Array(firstWeekday).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ];
+
+  const displayList = selectedDay ? filtered.filter((e) => getTaipeiDay(e.timestamp) === selectedDay) : filtered;
 
   const startEdit = (e) => {
     setEditingId(e.id);
@@ -291,7 +341,36 @@ function ExpenseTab() {
           </div>
         ))}
       </div>
-      {filtered.map((e) => (
+
+      <div className="calendar-card">
+        <div className="calendar-grid">
+          {["日","一","二","三","四","五","六"].map((wd) => (
+            <div className="calendar-weekday" key={wd}>{wd}</div>
+          ))}
+          {calendarCells.map((day, i) => {
+            if (day === null) return <div className="calendar-day empty" key={"e"+i}></div>;
+            const cls = ["calendar-day"];
+            if (dayHasData[day]) cls.push("has-data");
+            if (selectedDay === day) cls.push("selected");
+            return (
+              <div
+                key={day}
+                className={cls.join(" ")}
+                onClick={() => setSelectedDay(selectedDay === day ? null : day)}
+              >
+                {day}
+                {dayHasData[day] && <div className="calendar-dot"></div>}
+              </div>
+            );
+          })}
+        </div>
+        {selectedDay && (
+          <div className="calendar-clear" onClick={() => setSelectedDay(null)}>
+            清除日期篩選（顯示整月）
+          </div>
+        )}
+      </div>
+      {displayList.map((e) => (
         <div className="item-card" key={e.id}>
           {editingId === e.id ? (
             <div className="edit-form">
