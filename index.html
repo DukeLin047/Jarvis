@@ -135,19 +135,24 @@
 const { useState, useEffect, useMemo } = React;
 
 const firebaseConfig = {
-  apiKey: "AIzaSyB4n9hV4fTMI_qdJn8NxDgsZ_Uqa6cu3cs",
+  apiKey: "PASTE_YOUR_FIREBASE_API_KEY",
   authDomain: "jarvis-d45fd.firebaseapp.com",
   projectId: "jarvis-d45fd",
-  storageBucket: "jarvis-d45fd.firebasestorage.app",
-  messagingSenderId: "362035384532",
-  appId: "1:362035384532:web:06ac499f403e86a68beb41"
+  storageBucket: "jarvis-d45fd.appspot.com",
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-const FAMILY_PASSWORD = "0313"; // 可自行修改
+const FAMILY_PASSWORD = "family1313"; // 可自行修改
 const CATEGORIES = ["餐飲", "交通", "生活用品", "醫療", "娛樂", "其他"];
 const CAT_COLORS = { "餐飲": "#b5651d", "交通": "#a67c3d", "生活用品": "#c9a96a", "醫療": "#8a6d3b", "娛樂": "#d99a5b", "其他": "#7d6a4f" };
+
+function formatDate(timestamp) {
+  if (!timestamp || !timestamp.toDate) return "";
+  const date = timestamp.toDate();
+  const wd = ["日", "一", "二", "三", "四", "五", "六"][date.getDay()];
+  return `${date.getMonth() + 1}/${date.getDate()}(${wd})`;
+}
 
 function PasswordGate({ onUnlock }) {
   const [val, setVal] = useState("");
@@ -235,7 +240,7 @@ function ExpenseTab() {
             <div className="item-name">{e.item}</div>
             <div className="item-amt">${e.amount.toLocaleString()}</div>
           </div>
-          <div className="item-meta"><span className="cat-tag">{e.category}</span>{e.sender}</div>
+          <div className="item-meta"><span className="cat-tag">{e.category}</span>{e.sender} · {formatDate(e.timestamp)}</div>
         </div>
       ))}
     </div>
@@ -285,7 +290,7 @@ function NoteTab() {
       {notes.map((n) => (
         <div className="item-card note-item" key={n.id}>
           <div className="item-name">{n.content}</div>
-          <div className="item-meta">{n.sender}</div>
+          <div className="item-meta">{n.sender} · {formatDate(n.timestamp)}</div>
         </div>
       ))}
     </div>
