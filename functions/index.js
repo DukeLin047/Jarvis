@@ -253,6 +253,76 @@ const HELP_TEXT = `🏠 家庭小管家 使用說明
 
 // ---------- 主 webhook ----------
 
+// ---------- 一次性設定：建立底部固定選單 ----------
+// 瀏覽器打開這支函式的網址（帶 ?secret=你的LINE_CHANNEL_SECRET）即可自動設定選單
+exports.setupRichMenu = onRequest(async (req, res) => {
+  if (req.query.secret !== LINE_CHANNEL_SECRET) {
+    res.status(403).send("Forbidden");
+    return;
+  }
+
+  try {
+    // 1. 抓取選單圖片（放在網頁同個 GitHub Pages 上）
+    const imgRes = await fetch("https://dukelin047.github.io/Jarvis/richmenu.png");
+    if (!imgRes.ok) throw new Error("找不到 richmenu.png，請先上傳到 repo 根目錄");
+    const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+
+    // 2. 建立 rich menu 結構（4欄 x 2列，共8個按鈕）
+    const labels = ["記帳", "查帳", "待辦", "查待辦", "完成", "備忘", "查備忘", "說明"];
+    const CW = 2500 / 4;
+    const CH = 1686 / 2;
+    const areas = labels.map((text, i) => {
+      const col = i % 4;
+      const row = Math.floor(i / 4);
+      return {
+        bounds: { x: Math.round(col * CW), y: Math.round(row * CH), width: Math.round(CW), height: Math.round(CH) },
+        action: { type: "message", text },
+      };
+    });
+
+    const createRes = await fetch("https://api.line.me/v2/bot/richmenu", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
+      },
+      body: JSON.stringify({
+        size: { width: 2500, height: 1686 },
+        selected: true,
+        name: "家庭小管家選單",
+        chatBarText: "選單",
+        areas,
+      }),
+    });
+    const createData = await createRes.json();
+    if (!createData.richMenuId) throw new Error("建立選單失敗: " + JSON.stringify(createData));
+    const richMenuId = createData.richMenuId;
+
+    // 3. 上傳圖片
+    const uploadRes = await fetch(`https://api-data.line.me/v2/bot/richmenu/${richMenuId}/content`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "image/png",
+        Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
+      },
+      body: imgBuffer,
+    });
+    if (!uploadRes.ok) throw new Error("上傳圖片失敗: " + (await uploadRes.text()));
+
+    // 4. 設為預設選單（所有人都會看到）
+    const defaultRes = await fetch(`https://api.line.me/v2/bot/user/all/richmenu/${richMenuId}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` },
+    });
+    if (!defaultRes.ok) throw new Error("設定預設選單失敗: " + (await defaultRes.text()));
+
+    res.status(200).send(`選單設定成功！richMenuId: ${richMenuId}\n請重新打開 LINE 聊天室查看效果（可能需要切換分頁或重進聊天室）。`);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("設定失敗: " + err.message);
+  }
+});
+
 exports.lineWebhook = onRequest(async (req, res) => {
   const signature = req.headers["x-line-signature"];
   const hash = crypto
