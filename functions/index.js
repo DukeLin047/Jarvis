@@ -1,4 +1,5 @@
 const { onRequest } = require("firebase-functions/v2/https");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const admin = require("firebase-admin");
 const crypto = require("crypto");
 
@@ -29,6 +30,20 @@ async function replyMessage(replyToken, text) {
     },
     body: JSON.stringify({
       replyToken,
+      messages: [{ type: "text", text: text.slice(0, 4900) }],
+    }),
+  });
+}
+
+async function pushMessage(to, text) {
+  await fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
+    },
+    body: JSON.stringify({
+      to,
       messages: [{ type: "text", text: text.slice(0, 4900) }],
     }),
   });
@@ -149,7 +164,7 @@ async function handleAddExpense(text, groupId, senderName, replyToken) {
   if (!parsed) {
     await replyMessage(
       replyToken,
-      "格式不對喔～請用:\n記帳 類別 項目 金額\n例如: 記帳 餐飲 午餐 150\n(類別可省略,會自動歸類「其他」)\n\n可用類別: " +
+      "格式不對喔～請用:\n記帳 類別 項目 金額\n例如: 記帳 餐飲 午餐 150\n(類別可省略，會自動歸類「其他」)\n\n可用類別: " +
         CATEGORIES.join("/")
     );
     return;
@@ -392,8 +407,26 @@ async function handleQueryNote(groupId, replyToken) {
     await replyMessage(replyToken, "目前沒有備忘紀錄");
     return;
   }
-  const lines = docs.map((d) => `・${formatDate(d.timestamp?.toDate?.() || new Date())} ${d.content} (${d.sender})`);
-  await replyMessage(replyToken, `📌 最近備忘\n${lines.join("\n")}`);
+
+  // 依日期分組，同一天只顯示一次日期標題
+  const groups = [];
+  for (const d of docs) {
+    const dateLabel = formatDate(d.timestamp?.toDate?.() || new Date());
+    let group = groups.find((g) => g.dateLabel === dateLabel);
+    if (!group) {
+      group = { dateLabel, items: [] };
+      groups.push(group);
+    }
+    group.items.push(d);
+  }
+
+  let text = "📌 最近備忘\n";
+  for (const g of groups) {
+    text += `\n${g.dateLabel}\n`;
+    text += g.items.map((d, i) => `${i + 1}. ${d.content} (${d.sender})`).join("\n");
+  }
+
+  await replyMessage(replyToken, text);
 }
 
 // ---------- 依日期查詢 ----------
@@ -444,6 +477,79 @@ async function handleQueryByDate(year, month, day, groupId, replyToken) {
   await replyMessage(replyToken, text);
 }
 
+// ---------- 每日待辦提醒 ----------
+
+async function handleSetReminder(text, groupId, replyToken) {
+  const arg = text.trim();
+
+  if (arg === "關閉") {
+    await db.collection("settings").doc(groupId).set({ reminderEnabled: false }, { merge: true });
+    await replyMessage(replyToken, "已關閉每日待辦提醒 🔕");
+    return;
+  }
+
+  if (!arg) {
+    const doc = await db.collection("settings").doc(groupId).get();
+    const data = doc.exists ? doc.data() : {};
+    if (data.reminderEnabled) {
+      await replyMessage(replyToken, `目前每日提醒：開啟 ⏰ ${data.reminderTime}\n關閉請輸入「提醒 關閉」`);
+    } else {
+      await replyMessage(replyToken, `目前每日提醒：關閉\n開啟請輸入「提醒 時間」，例如: 提醒 20:00`);
+    }
+    return;
+  }
+
+  const match = arg.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    await replyMessage(replyToken, "格式: 提醒 時間\n例如: 提醒 20:00\n關閉請輸入: 提醒 關閉");
+    return;
+  }
+  const hh = String(parseInt(match[1], 10)).padStart(2, "0");
+  const mm = match[2];
+  const time = `${hh}:${mm}`;
+
+  await db.collection("settings").doc(groupId).set(
+    { reminderEnabled: true, reminderTime: time },
+    { merge: true }
+  );
+  await replyMessage(replyToken, `已開啟每日待辦提醒 ⏰\n時間: ${time}\n（每天這個時間會自動傳待辦清單）`);
+}
+
+exports.dailyReminderCheck = onSchedule(
+  { schedule: "every 1 minutes", timeZone: "Asia/Taipei" },
+  async () => {
+    const now = new Date();
+    const taipei = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+    const hh = String(taipei.getHours()).padStart(2, "0");
+    const mm = String(taipei.getMinutes()).padStart(2, "0");
+    const currentTime = `${hh}:${mm}`;
+
+    const snap = await db
+      .collection("settings")
+      .where("reminderEnabled", "==", true)
+      .where("reminderTime", "==", currentTime)
+      .get();
+
+    for (const doc of snap.docs) {
+      const groupId = doc.id;
+      const todoSnap = await db.collection("todos").where("groupId", "==", groupId).get();
+      const undone = todoSnap.docs
+        .map((d) => d.data())
+        .filter((d) => !d.done)
+        .sort((a, b) => (a.timestamp?.toMillis?.() || 0) - (b.timestamp?.toMillis?.() || 0));
+
+      let text;
+      if (undone.length === 0) {
+        text = "⏰ 每日待辦提醒\n目前沒有待辦事項 🎉";
+      } else {
+        const lines = undone.map((d, i) => `${i + 1}. ${d.content} (${d.sender})`);
+        text = `⏰ 每日待辦提醒\n${lines.join("\n")}`;
+      }
+      await pushMessage(groupId, text);
+    }
+  }
+);
+
 // ---------- 說明 ----------
 
 const HELP_TEXT = `🏠 家庭小管家 使用說明
@@ -471,9 +577,12 @@ const HELP_TEXT = `🏠 家庭小管家 使用說明
 查7/12 → 叫出每年7/12的記帳+備忘
 查2026/7/12 → 只查該年當天
 
-可用類別: ${CATEGORIES.join("/")}`;
+【每日提醒】
+提醒 20:00 → 每天這個時間自動傳待辦清單
+提醒 關閉 → 關閉提醒
+提醒 → 查看目前設定
 
-// ---------- 主 webhook ----------
+可用類別: ${CATEGORIES.join("/")}`;
 
 // ---------- 一次性設定：建立底部固定選單 ----------
 // 瀏覽器打開這支函式的網址（帶 ?secret=你的LINE_CHANNEL_SECRET）即可自動設定選單
@@ -484,12 +593,10 @@ exports.setupRichMenu = onRequest(async (req, res) => {
   }
 
   try {
-    // 1. 抓取選單圖片（放在網頁同個 GitHub Pages 上）
     const imgRes = await fetch("https://dukelin047.github.io/Jarvis/richmenu.png");
     if (!imgRes.ok) throw new Error("找不到 richmenu.png，請先上傳到 repo 根目錄");
     const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
 
-    // 2. 建立 rich menu 結構（4欄 x 2列，共8個按鈕）
     const labels = ["記帳", "查帳", "待辦", "查待辦", "完成", "備忘", "查備忘", "說明"];
     const CW = 2500 / 4;
     const CH = 1686 / 2;
@@ -520,7 +627,6 @@ exports.setupRichMenu = onRequest(async (req, res) => {
     if (!createData.richMenuId) throw new Error("建立選單失敗: " + JSON.stringify(createData));
     const richMenuId = createData.richMenuId;
 
-    // 3. 上傳圖片
     const uploadRes = await fetch(`https://api-data.line.me/v2/bot/richmenu/${richMenuId}/content`, {
       method: "POST",
       headers: {
@@ -531,7 +637,6 @@ exports.setupRichMenu = onRequest(async (req, res) => {
     });
     if (!uploadRes.ok) throw new Error("上傳圖片失敗: " + (await uploadRes.text()));
 
-    // 4. 設為預設選單（所有人都會看到）
     const defaultRes = await fetch(`https://api.line.me/v2/bot/user/all/richmenu/${richMenuId}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` },
@@ -544,6 +649,8 @@ exports.setupRichMenu = onRequest(async (req, res) => {
     res.status(500).send("設定失敗: " + err.message);
   }
 });
+
+// ---------- 主 webhook ----------
 
 exports.lineWebhook = onRequest(async (req, res) => {
   const signature = req.headers["x-line-signature"];
@@ -607,12 +714,14 @@ exports.lineWebhook = onRequest(async (req, res) => {
           await handleAddNote(text.slice(2).trim(), groupId, senderName, replyToken);
         } else if (text.startsWith("查備忘")) {
           await handleQueryNote(groupId, replyToken);
+        } else if (text.startsWith("提醒")) {
+          await handleSetReminder(text.slice(2).trim(), groupId, replyToken);
         } else if (text === "說明" || text === "功能" || text.toLowerCase() === "help") {
           await replyMessage(replyToken, HELP_TEXT);
         }
       } catch (err) {
         console.error(err);
-        await replyMessage(replyToken, "發生錯誤,請稍後再試 🙏");
+        await replyMessage(replyToken, "發生錯誤，請稍後再試 🙏");
       }
     })
   );
