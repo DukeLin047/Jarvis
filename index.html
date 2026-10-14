@@ -92,6 +92,10 @@
   }
   .summary-title { font-size: 12px; color: rgba(245,239,227,0.5); letter-spacing: 1px; margin-bottom: 12px; }
   .summary-total { font-family: "Noto Serif TC", serif; font-size: 28px; color: var(--clay); font-weight: 700; }
+  .balance-row {
+    display: flex; gap: 16px; margin-top: 10px; font-size: 13px; color: rgba(245,239,227,0.7);
+  }
+  .balance-row b { color: var(--parchment); }
   .bar-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
   .bar-label { width: 62px; flex-shrink: 0; color: rgba(245,239,227,0.75); }
   .bar-track { flex: 1; background: rgba(255,255,255,0.06); border-radius: 3px; height: 8px; overflow: hidden; }
@@ -111,12 +115,12 @@
     display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px;
     background: rgba(181,101,29,0.18); color: #d99a5b; margin-right: 6px;
   }
-  .todo-item { display: flex; align-items: center; gap: 10px; }
-  .todo-dot {
-    width: 8px; height: 8px; border-radius: 50%; background: var(--sage); flex-shrink: 0;
+  .due-tag {
+    display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px;
+    background: rgba(201,169,106,0.18); color: var(--gold); margin-left: 6px;
   }
+  .todo-item { display: flex; align-items: center; gap: 10px; }
   .todo-item.done .item-name { text-decoration: line-through; opacity: 0.4; }
-  .todo-item.done .todo-dot { background: rgba(245,239,227,0.2); }
   .note-item { border-left: 3px solid var(--dusty-blue); }
 
   .empty-state { text-align: center; padding: 60px 20px; color: rgba(245,239,227,0.35); font-size: 14px; }
@@ -200,7 +204,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-const FAMILY_PASSWORD = "family1313"; // 可自行修改
+const FAMILY_PASSWORD = "0313";
 const CATEGORIES = ["餐飲", "交通", "生活用品", "醫療", "娛樂", "其他"];
 const CAT_COLORS = { "餐飲": "#b5651d", "交通": "#a67c3d", "生活用品": "#c9a96a", "醫療": "#8a6d3b", "娛樂": "#d99a5b", "其他": "#7d6a4f" };
 
@@ -263,6 +267,7 @@ function useCollection(name) {
 
 function ExpenseTab() {
   const expenses = useCollection("expenses");
+  const incomes = useCollection("incomes");
   const months = useMemo(() => {
     if (!expenses) return [];
     return [...new Set(expenses.map((e) => e.yearMonth))].sort().reverse();
@@ -282,6 +287,11 @@ function ExpenseTab() {
   let total = 0;
   filtered.forEach((e) => { byCategory[e.category] = (byCategory[e.category] || 0) + e.amount; total += e.amount; });
   const maxAmt = Math.max(1, ...Object.values(byCategory));
+
+  const incomeTotal = (incomes || [])
+    .filter((i) => i.yearMonth === month)
+    .reduce((s, i) => s + i.amount, 0);
+  const balance = incomeTotal - total;
 
   // 萬年曆：計算本月天數與每天是否有記帳
   const [yStr, mStr] = (month || "2026-01").split("-");
@@ -333,6 +343,10 @@ function ExpenseTab() {
           </select>
         </div>
         <div className="summary-total">${total.toLocaleString()}</div>
+        <div className="balance-row">
+          <span>收入 <b>${incomeTotal.toLocaleString()}</b></span>
+          <span>結餘 <b style={{color: balance >= 0 ? "#7cae6b" : "#c0564a"}}>${balance.toLocaleString()}</b></span>
+        </div>
         {Object.entries(byCategory).sort((a,b) => b[1]-a[1]).map(([cat, amt]) => (
           <div className="bar-row" key={cat}>
             <div className="bar-label">{cat}</div>
@@ -370,6 +384,7 @@ function ExpenseTab() {
           </div>
         )}
       </div>
+
       {displayList.map((e) => (
         <div className="item-card" key={e.id}>
           {editingId === e.id ? (
@@ -457,7 +472,10 @@ function TodoTab() {
         <React.Fragment>
           <button className={`todo-check ${t.done ? "checked" : ""}`} onClick={() => toggle(t)}></button>
           <div style={{flex:1}}>
-            <div className="item-name">{t.content}</div>
+            <div className="item-name">
+              {t.content}
+              {t.dueMonth && <span className="due-tag">{t.dueMonth}/{t.dueDay}</span>}
+            </div>
             <div className="item-meta">{t.done ? `${t.sender} → ${t.doneBy || ""} 完成` : t.sender}</div>
           </div>
           <div className="action-row">
