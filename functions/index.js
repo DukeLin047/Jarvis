@@ -19,6 +19,14 @@ function formatDate(date) {
   return `${m}/${d}(${wd})`;
 }
 
+function taipeiNow() {
+  return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+}
+
+function yearMonthOf(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
 // ---------- LINE API helpers ----------
 
 async function replyMessage(replyToken, text) {
@@ -71,11 +79,10 @@ async function getDisplayName(source) {
 }
 
 function getGroupId(source) {
-  // 家庭群組用 groupId 當作資料範圍；私訊則用 userId 各自獨立
   return source.groupId || source.roomId || source.userId;
 }
 
-// ---------- 記帳 ----------
+// ---------- 記帳（支出） ----------
 
 function parseExpense(text) {
   const tokens = text.trim().split(/\s+/).filter(Boolean);
@@ -97,6 +104,27 @@ function parseExpense(text) {
   if (!item) return null;
 
   return { category, item, amount };
+}
+
+async function checkBudgetWarning(groupId, category) {
+  const settingsDoc = await db.collection("settings").doc(groupId).get();
+  const budgets = settingsDoc.exists ? settingsDoc.data().budgets || {} : {};
+  const budget = budgets[category];
+  if (!budget) return "";
+
+  const yearMonth = yearMonthOf(taipeiNow());
+  const snap = await db.collection("expenses").where("groupId", "==", groupId).get();
+  const spent = snap.docs
+    .map((d) => d.data())
+    .filter((d) => d.yearMonth === yearMonth && d.category === category)
+    .reduce((s, d) => s + d.amount, 0);
+
+  if (spent >= budget) {
+    return `\n\n⚠️ 本月「${category}」已超支！$${spent}／預算 $${budget}`;
+  } else if (spent >= budget * 0.8) {
+    return `\n\n🔔 本月「${category}」已花 $${spent}，接近預算 $${budget}`;
+  }
+  return "";
 }
 
 async function handleDeleteExpense(keyword, groupId, replyToken) {
@@ -169,8 +197,8 @@ async function handleAddExpense(text, groupId, senderName, replyToken) {
     );
     return;
   }
-  const now = new Date();
-  const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const now = taipeiNow();
+  const yearMonth = yearMonthOf(now);
 
   await db.collection("expenses").add({
     groupId,
@@ -182,16 +210,17 @@ async function handleAddExpense(text, groupId, senderName, replyToken) {
     timestamp: admin.firestore.FieldValue.serverTimestamp(),
   });
 
+  const warning = await checkBudgetWarning(groupId, parsed.category);
+
   await replyMessage(
     replyToken,
-    `已記帳 ✅\n${parsed.category} - ${parsed.item}\n金額: $${parsed.amount}\n日期: ${formatDate(now)}\n記錄人: ${senderName}`
+    `已記帳 ✅\n${parsed.category} - ${parsed.item}\n金額: $${parsed.amount}\n日期: ${formatDate(now)}\n記錄人: ${senderName}${warning}`
   );
 }
 
 async function handleQueryExpense(text, groupId, replyToken) {
   const arg = text.trim();
-  const now = new Date();
-  const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const yearMonth = yearMonthOf(taipeiNow());
 
   const snap = await db.collection("expenses").where("groupId", "==", groupId).get();
   let docs = snap.docs.map((d) => d.data()).filter((d) => d.yearMonth === yearMonth);
@@ -225,14 +254,141 @@ async function handleQueryExpense(text, groupId, replyToken) {
     const lines = Object.entries(byCategory)
       .sort((a, b) => b[1] - a[1])
       .map(([cat, amt]) => `・${cat}: $${amt}`);
+
+    const incomeSnap = await db.collection("incomes").where("groupId", "==", groupId).get();
+    const incomeTotal = incomeSnap.docs
+      .map((d) => d.data())
+      .filter((d) => d.yearMonth === yearMonth)
+      .reduce((s, d) => s + d.amount, 0);
+    const balance = incomeTotal - total;
+
     await replyMessage(
       replyToken,
-      `${title}\n${lines.join("\n")}\n\n總計: $${total}\n\n輸入「查帳 類別」可看明細`
+      `${title}\n${lines.join("\n")}\n\n支出總計: $${total}\n收入總計: $${incomeTotal}\n結餘: $${balance}\n\n輸入「查帳 類別」可看明細`
     );
   }
 }
 
+// ---------- 收入 ----------
+
+function parseIncome(text) {
+  const tokens = text.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length < 2) return null;
+  const amountStr = tokens[tokens.length - 1];
+  const amount = parseFloat(amountStr.replace(/[,元]/g, ""));
+  if (isNaN(amount)) return null;
+  const item = tokens.slice(0, -1).join(" ").trim();
+  if (!item) return null;
+  return { item, amount };
+}
+
+async function handleAddIncome(text, groupId, senderName, replyToken) {
+  const parsed = parseIncome(text);
+  if (!parsed) {
+    await replyMessage(replyToken, "格式: 收入 項目 金額\n例如: 收入 薪水 45000");
+    return;
+  }
+  const now = taipeiNow();
+  const yearMonth = yearMonthOf(now);
+
+  await db.collection("incomes").add({
+    groupId,
+    item: parsed.item,
+    amount: parsed.amount,
+    sender: senderName,
+    yearMonth,
+    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  await replyMessage(
+    replyToken,
+    `已記錄收入 ✅\n${parsed.item}\n金額: $${parsed.amount}\n日期: ${formatDate(now)}\n記錄人: ${senderName}`
+  );
+}
+
+async function handleQueryIncome(groupId, replyToken) {
+  const yearMonth = yearMonthOf(taipeiNow());
+  const snap = await db.collection("incomes").where("groupId", "==", groupId).get();
+  const docs = snap.docs
+    .map((d) => d.data())
+    .filter((d) => d.yearMonth === yearMonth)
+    .sort((a, b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0));
+
+  if (docs.length === 0) {
+    await replyMessage(replyToken, "本月還沒有任何收入紀錄喔");
+    return;
+  }
+  const lines = docs.map((d) => `・${formatDate(d.timestamp?.toDate?.() || new Date())} ${d.item} $${d.amount} (${d.sender})`);
+  const total = docs.reduce((s, d) => s + d.amount, 0);
+  await replyMessage(replyToken, `💰 本月(${yearMonth})收入\n${lines.join("\n")}\n\n總計: $${total}`);
+}
+
+// ---------- 預算 ----------
+
+async function handleSetBudget(text, groupId, replyToken) {
+  const tokens = text.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length !== 2 || !CATEGORIES.includes(tokens[0])) {
+    await replyMessage(
+      replyToken,
+      "格式: 設定預算 類別 金額\n例如: 設定預算 餐飲 3000\n可用類別: " + CATEGORIES.join("/")
+    );
+    return;
+  }
+  const category = tokens[0];
+  const amount = parseFloat(tokens[1]);
+  if (isNaN(amount)) {
+    await replyMessage(replyToken, "金額格式不對喔～請用: 設定預算 類別 金額");
+    return;
+  }
+
+  await db.collection("settings").doc(groupId).set(
+    { budgets: { [category]: amount } },
+    { merge: true }
+  );
+  await replyMessage(replyToken, `已設定預算 ✅\n${category}: $${amount} / 月`);
+}
+
+async function handleQueryBudget(groupId, replyToken) {
+  const settingsDoc = await db.collection("settings").doc(groupId).get();
+  const budgets = settingsDoc.exists ? settingsDoc.data().budgets || {} : {};
+  const categories = Object.keys(budgets);
+
+  if (categories.length === 0) {
+    await replyMessage(replyToken, "目前還沒有設定任何預算\n格式: 設定預算 類別 金額");
+    return;
+  }
+
+  const yearMonth = yearMonthOf(taipeiNow());
+  const snap = await db.collection("expenses").where("groupId", "==", groupId).get();
+  const docs = snap.docs.map((d) => d.data()).filter((d) => d.yearMonth === yearMonth);
+
+  const lines = categories.map((cat) => {
+    const spent = docs.filter((d) => d.category === cat).reduce((s, d) => s + d.amount, 0);
+    const budget = budgets[cat];
+    const pct = Math.round((spent / budget) * 100);
+    const flag = spent >= budget ? "⚠️" : spent >= budget * 0.8 ? "🔔" : "✅";
+    return `${flag} ${cat}: $${spent} / $${budget} (${pct}%)`;
+  });
+
+  await replyMessage(replyToken, `💳 本月(${yearMonth})預算狀況\n${lines.join("\n")}`);
+}
+
 // ---------- 待辦 ----------
+
+function parseDueDate(content) {
+  const tokens = content.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return { content: content.trim(), dueMonth: null, dueDay: null };
+  const last = tokens[tokens.length - 1];
+  const m = last.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (m) {
+    return {
+      content: tokens.slice(0, -1).join(" "),
+      dueMonth: parseInt(m[1], 10),
+      dueDay: parseInt(m[2], 10),
+    };
+  }
+  return { content: content.trim(), dueMonth: null, dueDay: null };
+}
 
 async function handleDeleteTodo(keyword, groupId, replyToken) {
   if (!keyword) {
@@ -257,11 +413,12 @@ async function handleDeleteTodo(keyword, groupId, replyToken) {
 async function handleEditTodo(text, groupId, senderName, replyToken) {
   const tokens = text.trim().split(/\s+/).filter(Boolean);
   if (tokens.length < 2) {
-    await replyMessage(replyToken, "格式: 改待辦 舊關鍵字 新內容\n例如: 改待辦 尿布 買濕紙巾");
+    await replyMessage(replyToken, "格式: 改待辦 舊關鍵字 新內容\n例如: 改待辦 尿布 買濕紙布");
     return;
   }
   const keyword = tokens[0];
-  const newContent = tokens.slice(1).join(" ");
+  const newContentRaw = tokens.slice(1).join(" ");
+  const { content: newContent, dueMonth, dueDay } = parseDueDate(newContentRaw);
 
   const snap = await db.collection("todos").where("groupId", "==", groupId).get();
   const docs = snap.docs
@@ -276,25 +433,39 @@ async function handleEditTodo(text, groupId, senderName, replyToken) {
   const old = target.data().content;
   await target.ref.update({
     content: newContent,
+    dueMonth: dueMonth || null,
+    dueDay: dueDay || null,
+    remindedDate: null,
     editedBy: senderName,
     editedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
   await replyMessage(replyToken, `已修改待辦 ✏️\n「${old}」→「${newContent}」\n修改人: ${senderName}`);
 }
 
-async function handleAddTodo(content, groupId, senderName, replyToken) {
-  if (!content) {
-    await replyMessage(replyToken, "格式: 待辦 內容\n例如: 待辦 買尿布");
+async function handleAddTodo(text, groupId, senderName, replyToken) {
+  if (!text) {
+    await replyMessage(replyToken, "格式: 待辦 內容 (日期可省略)\n例如: 待辦 買尿布\n待辦 倒垃圾 7/20");
     return;
   }
+  const { content, dueMonth, dueDay } = parseDueDate(text);
+  if (!content) {
+    await replyMessage(replyToken, "格式: 待辦 內容 (日期可省略)\n例如: 待辦 買尿布\n待辦 倒垃圾 7/20");
+    return;
+  }
+
   await db.collection("todos").add({
     groupId,
     content,
     done: false,
+    dueMonth: dueMonth || null,
+    dueDay: dueDay || null,
+    remindedDate: null,
     sender: senderName,
     timestamp: admin.firestore.FieldValue.serverTimestamp(),
   });
-  await replyMessage(replyToken, `已加入待辦 ✅\n「${content}」\n新增人: ${senderName}`);
+
+  const dueText = dueMonth ? `\n提醒日期: ${dueMonth}/${dueDay}` : "";
+  await replyMessage(replyToken, `已加入待辦 ✅\n「${content}」${dueText}\n新增人: ${senderName}`);
 }
 
 async function handleQueryTodo(groupId, replyToken) {
@@ -308,7 +479,10 @@ async function handleQueryTodo(groupId, replyToken) {
     await replyMessage(replyToken, "目前沒有待辦事項 🎉");
     return;
   }
-  const lines = docs.map((d, i) => `${i + 1}. ${d.content} (${d.sender})`);
+  const lines = docs.map((d, i) => {
+    const due = d.dueMonth ? ` (${d.dueMonth}/${d.dueDay})` : "";
+    return `${i + 1}. ${d.content}${due} (${d.sender})`;
+  });
   await replyMessage(replyToken, `📝 待辦事項\n${lines.join("\n")}\n\n完成後輸入「完成 關鍵字」`);
 }
 
@@ -393,7 +567,7 @@ async function handleAddNote(content, groupId, senderName, replyToken) {
     sender: senderName,
     timestamp: admin.firestore.FieldValue.serverTimestamp(),
   });
-  await replyMessage(replyToken, `已記錄備忘 ✅\n「${content}」\n日期: ${formatDate(new Date())}\n記錄人: ${senderName}`);
+  await replyMessage(replyToken, `已記錄備忘 ✅\n「${content}」\n日期: ${formatDate(taipeiNow())}\n記錄人: ${senderName}`);
 }
 
 async function handleQueryNote(groupId, replyToken) {
@@ -408,7 +582,6 @@ async function handleQueryNote(groupId, replyToken) {
     return;
   }
 
-  // 依日期分組，同一天只顯示一次日期標題
   const groups = [];
   for (const d of docs) {
     const dateLabel = formatDate(d.timestamp?.toDate?.() || new Date());
@@ -477,7 +650,7 @@ async function handleQueryByDate(year, month, day, groupId, replyToken) {
   await replyMessage(replyToken, text);
 }
 
-// ---------- 每日待辦提醒 ----------
+// ---------- 每日提醒（兩種：每日摘要 + 待辦到期提醒） ----------
 
 async function handleSetReminder(text, groupId, replyToken) {
   const arg = text.trim();
@@ -512,25 +685,27 @@ async function handleSetReminder(text, groupId, replyToken) {
     { reminderEnabled: true, reminderTime: time },
     { merge: true }
   );
-  await replyMessage(replyToken, `已開啟每日待辦提醒 ⏰\n時間: ${time}\n（每天這個時間會自動傳待辦清單）`);
+  await replyMessage(replyToken, `已開啟每日待辦提醒 ⏰\n時間: ${time}\n（每天這個時間會自動傳目前所有未完成待辦）`);
 }
+
+const DUE_DATE_CHECK_TIME = "08:00"; // 每天固定檢查一次「今天到期」的待辦
 
 exports.dailyReminderCheck = onSchedule(
   { schedule: "every 1 minutes", timeZone: "Asia/Taipei" },
   async () => {
-    const now = new Date();
-    const taipei = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+    const taipei = taipeiNow();
     const hh = String(taipei.getHours()).padStart(2, "0");
     const mm = String(taipei.getMinutes()).padStart(2, "0");
     const currentTime = `${hh}:${mm}`;
 
-    const snap = await db
+    // 1. 各群組自訂的每日待辦摘要時間
+    const settingsSnap = await db
       .collection("settings")
       .where("reminderEnabled", "==", true)
       .where("reminderTime", "==", currentTime)
       .get();
 
-    for (const doc of snap.docs) {
+    for (const doc of settingsSnap.docs) {
       const groupId = doc.id;
       const todoSnap = await db.collection("todos").where("groupId", "==", groupId).get();
       const undone = todoSnap.docs
@@ -542,10 +717,43 @@ exports.dailyReminderCheck = onSchedule(
       if (undone.length === 0) {
         text = "⏰ 每日待辦提醒\n目前沒有待辦事項 🎉";
       } else {
-        const lines = undone.map((d, i) => `${i + 1}. ${d.content} (${d.sender})`);
+        const lines = undone.map((d, i) => {
+          const due = d.dueMonth ? ` (${d.dueMonth}/${d.dueDay})` : "";
+          return `${i + 1}. ${d.content}${due} (${d.sender})`;
+        });
         text = `⏰ 每日待辦提醒\n${lines.join("\n")}`;
       }
       await pushMessage(groupId, text);
+    }
+
+    // 2. 固定時間檢查「今天到期」的待辦事項（不論有沒有開啟每日摘要）
+    if (currentTime === DUE_DATE_CHECK_TIME) {
+      const todayMonth = taipei.getMonth() + 1;
+      const todayDay = taipei.getDate();
+      const todayStr = `${taipei.getFullYear()}-${todayMonth}-${todayDay}`;
+
+      const dueSnap = await db
+        .collection("todos")
+        .where("done", "==", false)
+        .where("dueMonth", "==", todayMonth)
+        .where("dueDay", "==", todayDay)
+        .get();
+
+      const byGroup = {};
+      for (const doc of dueSnap.docs) {
+        const data = doc.data();
+        if (data.remindedDate === todayStr) continue; // 今天已提醒過，避免重複
+        if (!byGroup[data.groupId]) byGroup[data.groupId] = [];
+        byGroup[data.groupId].push({ ref: doc.ref, data });
+      }
+
+      for (const groupId of Object.keys(byGroup)) {
+        const items = byGroup[groupId];
+        const lines = items.map((it, i) => `${i + 1}. ${it.data.content} (${it.data.sender})`);
+        const text = `📅 今天到期的待辦\n${lines.join("\n")}`;
+        await pushMessage(groupId, text);
+        await Promise.all(items.map((it) => it.ref.update({ remindedDate: todayStr })));
+      }
     }
   }
 );
@@ -554,14 +762,22 @@ exports.dailyReminderCheck = onSchedule(
 
 const HELP_TEXT = `🏠 家庭小管家 使用說明
 
-【記帳】
+【記帳（支出）】
 記帳 類別 項目 金額 (類別可省略)
 查帳 / 查帳 類別
 改記帳 舊關鍵字 類別 項目 金額
 刪除記帳 關鍵字
 
+【收入】
+收入 項目 金額
+查收入
+
+【預算】
+設定預算 類別 金額
+查預算
+
 【待辦】
-待辦 內容
+待辦 內容 (日期可省略，如: 待辦 倒垃圾 7/20)
 查待辦
 完成 關鍵字
 改待辦 舊關鍵字 新內容
@@ -581,11 +797,11 @@ const HELP_TEXT = `🏠 家庭小管家 使用說明
 提醒 20:00 → 每天這個時間自動傳待辦清單
 提醒 關閉 → 關閉提醒
 提醒 → 查看目前設定
+（有設日期的待辦，當天早上8點會自動提醒一次）
 
 可用類別: ${CATEGORIES.join("/")}`;
 
 // ---------- 一次性設定：建立底部固定選單 ----------
-// 瀏覽器打開這支函式的網址（帶 ?secret=你的LINE_CHANNEL_SECRET）即可自動設定選單
 exports.setupRichMenu = onRequest(async (req, res) => {
   if (req.query.secret !== LINE_CHANNEL_SECRET) {
     res.status(403).send("Forbidden");
@@ -691,16 +907,25 @@ exports.lineWebhook = onRequest(async (req, res) => {
           await handleAddExpense(text.slice(2).trim(), groupId, senderName, replyToken);
         } else if (text.startsWith("查帳")) {
           await handleQueryExpense(text.slice(2).trim(), groupId, replyToken);
+        } else if (text.startsWith("設定預算")) {
+          await handleSetBudget(text.slice(4).trim(), groupId, replyToken);
+        } else if (text.startsWith("查預算")) {
+          await handleQueryBudget(groupId, replyToken);
+        } else if (text.startsWith("查收入")) {
+          await handleQueryIncome(groupId, replyToken);
+        } else if (text.startsWith("收入")) {
+          const senderName = await getDisplayName(event.source);
+          await handleAddIncome(text.slice(2).trim(), groupId, senderName, replyToken);
         } else if (text.startsWith("刪除待辦")) {
           await handleDeleteTodo(text.slice(4).trim(), groupId, replyToken);
         } else if (text.startsWith("改待辦")) {
           const senderName = await getDisplayName(event.source);
           await handleEditTodo(text.slice(3).trim(), groupId, senderName, replyToken);
+        } else if (text.startsWith("查待辦")) {
+          await handleQueryTodo(groupId, replyToken);
         } else if (text.startsWith("待辦")) {
           const senderName = await getDisplayName(event.source);
           await handleAddTodo(text.slice(2).trim(), groupId, senderName, replyToken);
-        } else if (text.startsWith("查待辦")) {
-          await handleQueryTodo(groupId, replyToken);
         } else if (text.startsWith("完成")) {
           const senderName = await getDisplayName(event.source);
           await handleCompleteTodo(text.slice(2).trim(), groupId, senderName, replyToken);
@@ -709,11 +934,11 @@ exports.lineWebhook = onRequest(async (req, res) => {
         } else if (text.startsWith("改備忘")) {
           const senderName = await getDisplayName(event.source);
           await handleEditNote(text.slice(3).trim(), groupId, senderName, replyToken);
+        } else if (text.startsWith("查備忘")) {
+          await handleQueryNote(groupId, replyToken);
         } else if (text.startsWith("備忘")) {
           const senderName = await getDisplayName(event.source);
           await handleAddNote(text.slice(2).trim(), groupId, senderName, replyToken);
-        } else if (text.startsWith("查備忘")) {
-          await handleQueryNote(groupId, replyToken);
         } else if (text.startsWith("提醒")) {
           await handleSetReminder(text.slice(2).trim(), groupId, replyToken);
         } else if (text === "說明" || text === "功能" || text.toLowerCase() === "help") {
