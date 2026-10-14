@@ -5,6 +5,9 @@ service cloud.firestore {
     match /expenses/{doc} {
       allow read, write: if true;
     }
+    match /incomes/{doc} {
+      allow read, write: if true;
+    }
     match /todos/{doc} {
       allow read, write: if true;
     }
