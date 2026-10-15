@@ -82,6 +82,22 @@
   .tab[data-k="expense"].active { border-color: var(--clay); color: var(--clay); }
   .tab[data-k="todo"].active { border-color: var(--sage); color: var(--sage); }
   .tab[data-k="note"].active { border-color: var(--dusty-blue); color: var(--dusty-blue); }
+  .tab[data-k="help"].active { border-color: var(--gold); color: var(--gold); }
+
+  .help-section { margin-bottom: 22px; }
+  .help-section-title {
+    font-family: "Noto Serif TC", serif; font-weight: 700; font-size: 16px;
+    color: var(--gold); margin-bottom: 10px;
+  }
+  .help-cmd {
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 4px; padding: 10px 12px; margin-bottom: 8px;
+  }
+  .help-cmd-syntax { font-size: 13px; color: var(--parchment); font-weight: 700; }
+  .help-cmd-example { font-size: 12px; color: rgba(245,239,227,0.5); margin-top: 4px; }
+  .help-note {
+    font-size: 12px; color: rgba(245,239,227,0.45); margin-top: 10px; line-height: 1.6;
+  }
 
   .content { padding: 20px 16px 60px; }
 
@@ -551,6 +567,76 @@ function NoteTab() {
   );
 }
 
+function CmdCard({ syntax, example }) {
+  return (
+    <div className="help-cmd">
+      <div className="help-cmd-syntax">{syntax}</div>
+      {example && <div className="help-cmd-example">例: {example}</div>}
+    </div>
+  );
+}
+
+function HelpTab() {
+  return (
+    <div>
+      <div className="help-section">
+        <div className="help-section-title">💰 記帳（支出）</div>
+        <CmdCard syntax="記帳 類別 項目 金額" example="記帳 餐飲 午餐 150（類別可省略）" />
+        <CmdCard syntax="查帳 / 查帳 類別" example="查帳 餐飲" />
+        <CmdCard syntax="改記帳 舊關鍵字 類別 項目 金額" example="改記帳 午餐 餐飲 排骨飯 120" />
+        <CmdCard syntax="刪除記帳 關鍵字" example="刪除記帳 午餐" />
+        <div className="help-note">可用類別: {CATEGORIES.join("/")}</div>
+      </div>
+
+      <div className="help-section">
+        <div className="help-section-title">💵 收入</div>
+        <CmdCard syntax="收入 項目 金額" example="收入 薪水 45000" />
+        <CmdCard syntax="查收入" />
+      </div>
+
+      <div className="help-section">
+        <div className="help-section-title">📊 預算</div>
+        <CmdCard syntax="設定預算 類別 金額" example="設定預算 餐飲 3000" />
+        <CmdCard syntax="查預算" />
+        <div className="help-note">記帳超過預算八成會提醒，超支會警告</div>
+      </div>
+
+      <div className="help-section">
+        <div className="help-section-title">📝 待辦</div>
+        <CmdCard syntax="待辦 內容" example="待辦 買尿布" />
+        <CmdCard syntax="待辦 內容 日期" example="待辦 倒垃圾 7/20（當天早上8點自動提醒）" />
+        <CmdCard syntax="查待辦" />
+        <CmdCard syntax="完成 關鍵字" example="完成 買尿布" />
+        <CmdCard syntax="改待辦 舊關鍵字 新內容" />
+        <CmdCard syntax="刪除待辦 關鍵字" />
+      </div>
+
+      <div className="help-section">
+        <div className="help-section-title">📌 備忘</div>
+        <CmdCard syntax="備忘 內容" example="備忘 週日阿嬤生日" />
+        <CmdCard syntax="查備忘" />
+        <CmdCard syntax="改備忘 舊關鍵字 新內容" />
+        <CmdCard syntax="刪除備忘 關鍵字" />
+      </div>
+
+      <div className="help-section">
+        <div className="help-section-title">📅 依日期查詢</div>
+        <CmdCard syntax="查7/12" example="每年7/12的記帳+備忘" />
+        <CmdCard syntax="查2026/7/12" example="只查該年當天" />
+      </div>
+
+      <div className="help-section">
+        <div className="help-section-title">⏰ 每日提醒</div>
+        <CmdCard syntax="提醒 20:00" example="每天這時間自動傳待辦清單" />
+        <CmdCard syntax="提醒 關閉" />
+        <CmdCard syntax="提醒" example="查看目前設定" />
+      </div>
+
+      <div className="help-note">以上指令都在 LINE 群組輸入即可；這個網頁用來查看整理好的清單與統計圖表。</div>
+    </div>
+  );
+}
+
 function App() {
   const [unlocked, setUnlocked] = useState(localStorage.getItem("jarvis_unlocked") === "1");
   const [tab, setTab] = useState("expense");
@@ -567,11 +653,13 @@ function App() {
         <div className={`tab ${tab==="expense"?"active":""}`} data-k="expense" onClick={() => setTab("expense")}>記帳</div>
         <div className={`tab ${tab==="todo"?"active":""}`} data-k="todo" onClick={() => setTab("todo")}>待辦</div>
         <div className={`tab ${tab==="note"?"active":""}`} data-k="note" onClick={() => setTab("note")}>備忘</div>
+        <div className={`tab ${tab==="help"?"active":""}`} data-k="help" onClick={() => setTab("help")}>說明</div>
       </div>
       <div className="content">
         {tab === "expense" && <ExpenseTab />}
         {tab === "todo" && <TodoTab />}
         {tab === "note" && <NoteTab />}
+        {tab === "help" && <HelpTab />}
       </div>
     </div>
   );
