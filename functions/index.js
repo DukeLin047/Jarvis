@@ -43,6 +43,20 @@ async function replyMessage(replyToken, text) {
   });
 }
 
+async function replyMessages(replyToken, texts) {
+  await fetch("https://api.line.me/v2/bot/message/reply", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
+    },
+    body: JSON.stringify({
+      replyToken,
+      messages: texts.slice(0, 5).map((t) => ({ type: "text", text: t.slice(0, 4900) })),
+    }),
+  });
+}
+
 async function pushMessage(to, text) {
   await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
@@ -760,46 +774,65 @@ exports.dailyReminderCheck = onSchedule(
 
 // ---------- 說明 ----------
 
-const HELP_TEXT = `🏠 家庭小管家 使用說明
+const HELP_TEXT_1 = `🏠 家庭小管家 使用說明 (1/2)
 
-【記帳（支出）】
-記帳 類別 項目 金額 (類別可省略)
-查帳 / 查帳 類別
-改記帳 舊關鍵字 類別 項目 金額
-刪除記帳 關鍵字
+【💰 記帳（支出）】
+・記帳 類別 項目 金額
+  例: 記帳 餐飲 午餐 150
+  （類別可省略，自動歸類「其他」）
+・查帳 → 看本月各類別統計+結餘
+・查帳 類別 → 看該類別明細
+  例: 查帳 餐飲
+・改記帳 舊關鍵字 類別 項目 金額
+  例: 改記帳 午餐 餐飲 排骨飯 120
+・刪除記帳 關鍵字
+  例: 刪除記帳 午餐
 
-【收入】
-收入 項目 金額
-查收入
+可用類別: ${CATEGORIES.join("/")}
 
-【預算】
-設定預算 類別 金額
-查預算
+【💵 收入】
+・收入 項目 金額
+  例: 收入 薪水 45000
+・查收入 → 看本月收入明細
 
-【待辦】
-待辦 內容 (日期可省略，如: 待辦 倒垃圾 7/20)
-查待辦
-完成 關鍵字
-改待辦 舊關鍵字 新內容
-刪除待辦 關鍵字
+【📊 預算】
+・設定預算 類別 金額
+  例: 設定預算 餐飲 3000
+・查預算 → 看各類別花費/預算進度
+（記帳超過預算八成或超支會自動提醒）`;
 
-【備忘】
-備忘 內容
-查備忘
-改備忘 舊關鍵字 新內容
-刪除備忘 關鍵字
+const HELP_TEXT_2 = `🏠 家庭小管家 使用說明 (2/2)
 
-【依日期查詢】
-查7/12 → 叫出每年7/12的記帳+備忘
-查2026/7/12 → 只查該年當天
+【📝 待辦】
+・待辦 內容
+  例: 待辦 買尿布
+・待辦 內容 日期 → 加上到期提醒
+  例: 待辦 倒垃圾 7/20
+  （當天早上8點自動提醒一次）
+・查待辦 → 看未完成清單
+・完成 關鍵字
+  例: 完成 買尿布
+・改待辦 舊關鍵字 新內容
+・刪除待辦 關鍵字
 
-【每日提醒】
-提醒 20:00 → 每天這個時間自動傳待辦清單
-提醒 關閉 → 關閉提醒
-提醒 → 查看目前設定
-（有設日期的待辦，當天早上8點會自動提醒一次）
+【📌 備忘】
+・備忘 內容
+  例: 備忘 週日阿嬤生日
+・查備忘 → 看最近10筆
+・改備忘 舊關鍵字 新內容
+・刪除備忘 關鍵字
 
-可用類別: ${CATEGORIES.join("/")}`;
+【📅 依日期查詢】
+・查7/12 → 每年7/12的記帳+備忘
+・查2026/7/12 → 只查該年當天
+
+【⏰ 每日提醒】
+・提醒 20:00 → 開啟，每天這時間傳待辦清單
+・提醒 關閉 → 關閉
+・提醒 → 查看目前設定
+
+💻 也可以打開網頁查看完整列表與統計圖表：
+https://dukelin047.github.io/Jarvis/`;
 
 // ---------- 一次性設定：建立底部固定選單 ----------
 exports.setupRichMenu = onRequest(async (req, res) => {
@@ -942,7 +975,7 @@ exports.lineWebhook = onRequest(async (req, res) => {
         } else if (text.startsWith("提醒")) {
           await handleSetReminder(text.slice(2).trim(), groupId, replyToken);
         } else if (text === "說明" || text === "功能" || text.toLowerCase() === "help") {
-          await replyMessage(replyToken, HELP_TEXT);
+          await replyMessages(replyToken, [HELP_TEXT_1, HELP_TEXT_2]);
         }
       } catch (err) {
         console.error(err);
