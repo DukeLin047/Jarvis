@@ -619,46 +619,84 @@ async function handleQueryNote(groupId, replyToken) {
 // ---------- 依日期查詢 ----------
 
 async function handleQueryByDate(year, month, day, groupId, replyToken) {
-  const expSnap = await db.collection("expenses").where("groupId", "==", groupId).get();
-  const noteSnap = await db.collection("notes").where("groupId", "==", groupId).get();
+  const [expSnap, incSnap, todoSnap, noteSnap] = await Promise.all([
+    db.collection("expenses").where("groupId", "==", groupId).get(),
+    db.collection("incomes").where("groupId", "==", groupId).get(),
+    db.collection("todos").where("groupId", "==", groupId).get(),
+    db.collection("notes").where("groupId", "==", groupId).get(),
+  ]);
+
+  const toTaipei = (timestamp) =>
+    new Date(timestamp.toDate().toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
 
   const matchDate = (timestamp) => {
     if (!timestamp?.toDate) return false;
-    const d = new Date(timestamp.toDate().toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
-    const monthDayMatch = d.getMonth() + 1 === month && d.getDate() === day;
-    if (!monthDayMatch) return false;
+    const d = toTaipei(timestamp);
+    if (d.getMonth() + 1 !== month || d.getDate() !== day) return false;
     return year ? d.getFullYear() === year : true;
   };
 
-  const expenses = expSnap.docs
-    .map((d) => d.data())
-    .filter((d) => matchDate(d.timestamp))
-    .sort((a, b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0));
+  const byTimeDesc = (a, b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0);
 
-  const notes = noteSnap.docs
+  const expenses = expSnap.docs.map((d) => d.data()).filter((d) => matchDate(d.timestamp)).sort(byTimeDesc);
+  const incomes = incSnap.docs.map((d) => d.data()).filter((d) => matchDate(d.timestamp)).sort(byTimeDesc);
+  const notes = noteSnap.docs.map((d) => d.data()).filter((d) => matchDate(d.timestamp)).sort(byTimeDesc);
+
+  // 待辦：當天新增的 + 設定當天到期的
+  const todos = todoSnap.docs
     .map((d) => d.data())
-    .filter((d) => matchDate(d.timestamp))
-    .sort((a, b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0));
+    .map((d) => {
+      const created = matchDate(d.timestamp);
+      let due = d.dueMonth === month && d.dueDay === day;
+      if (due && year && d.timestamp?.toDate) {
+        due = toTaipei(d.timestamp).getFullYear() === year;
+      }
+      return { ...d, _created: created, _due: due };
+    })
+    .filter((d) => d._created || d._due)
+    .sort(byTimeDesc);
 
   const label = year ? `${year}/${month}/${day}` : `${month}/${day}`;
 
-  if (expenses.length === 0 && notes.length === 0) {
-    await replyMessage(replyToken, `找不到 ${label} 的任何記帳或備忘紀錄`);
+  if (expenses.length === 0 && incomes.length === 0 && todos.length === 0 && notes.length === 0) {
+    await replyMessage(replyToken, `找不到 ${label} 的任何記帳、待辦或備忘紀錄`);
     return;
   }
 
-  let text = `📅 ${label} 紀錄\n`;
+  let text = `📅 ${label} 紀錄`;
 
-  if (expenses.length > 0) {
-    const total = expenses.reduce((s, d) => s + d.amount, 0);
-    text += `\n【記帳】\n`;
-    text += expenses.map((d) => `・${d.category} ${d.item} $${d.amount} (${d.sender})`).join("\n");
-    text += `\n小計: $${total}`;
+  // 記帳（支出 + 收入）
+  if (expenses.length > 0 || incomes.length > 0) {
+    text += `\n\n【記帳】`;
+    let n = 1;
+    for (const d of expenses) {
+      text += `\n${n++}. ${d.category} ${d.item} -$${d.amount} (${d.sender})`;
+    }
+    for (const d of incomes) {
+      text += `\n${n++}. 收入 ${d.item} +$${d.amount} (${d.sender})`;
+    }
+    const expTotal = expenses.reduce((s, d) => s + d.amount, 0);
+    const incTotal = incomes.reduce((s, d) => s + d.amount, 0);
+    text += `\n支出 $${expTotal}`;
+    if (incomes.length > 0) text += `／收入 $${incTotal}`;
   }
 
+  // 待辦
+  if (todos.length > 0) {
+    text += `\n\n【待辦】`;
+    todos.forEach((d, i) => {
+      const mark = d.done ? "✅" : "⬜";
+      const tag = d._due ? " 📌到期" : "";
+      text += `\n${i + 1}. ${mark} ${d.content}${tag} (${d.sender})`;
+    });
+  }
+
+  // 備忘
   if (notes.length > 0) {
-    text += `\n\n【備忘】\n`;
-    text += notes.map((d) => `・${d.content} (${d.sender})`).join("\n");
+    text += `\n\n【備忘】`;
+    notes.forEach((d, i) => {
+      text += `\n${i + 1}. ${d.content} (${d.sender})`;
+    });
   }
 
   await replyMessage(replyToken, text);
@@ -823,7 +861,7 @@ const HELP_TEXT_2 = `🏠 家庭小管家 使用說明 (2/2)
 ・刪除備忘 關鍵字
 
 【📅 依日期查詢】
-・查7/12 → 每年7/12的記帳+備忘
+・查7/12 → 每年7/12的記帳+待辦+備忘
 ・查2026/7/12 → 只查該年當天
 
 【⏰ 每日提醒】
